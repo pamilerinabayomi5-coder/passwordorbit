@@ -1,4 +1,6 @@
+import os
 import sys
+import asyncio
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ConversationHandler
 from config import BOT_TOKEN, logger
 import database
@@ -12,19 +14,21 @@ def main():
     # Instantiation of structural app context builder interfaces
     application = Application.builder().token(BOT_TOKEN).build()
     
-    # Conversation setup definitions mappings
+    # Conversation setup definitions mappings (added per_message=True to clear framework warnings)
     length_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(handlers.prompt_length_change, pattern="^set_len_prompt$")],
         states={handlers.EDIT_LENGTH: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.save_length_change)]},
         fallbacks=[CommandHandler("cancel", handlers.cancel_conversation)],
-        per_chat=True
+        per_chat=True,
+        per_message=True
     )
     
     quantity_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(handlers.prompt_quantity_change, pattern="^set_qty_prompt$")],
         states={handlers.EDIT_QUANTITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.save_quantity_change)]},
         fallbacks=[CommandHandler("cancel", handlers.cancel_conversation)],
-        per_chat=True
+        per_chat=True,
+        per_message=True
     )
     
     # Register structured workflow router components
@@ -38,10 +42,30 @@ def main():
     # Exception boundary integration hook definitions
     application.add_error_handler(handlers.error_logging_handler)
     
-    logger.info("PasswordOrbitBot initialization completed. Commencing continuous operation polling...")
+    # Fetch environment configurations for Web Service deployment
+    webhook_url = os.getenv("RENDER_EXTERNAL_URL")
+    port_str = os.getenv("PORT")
     
-    # Run loop processes orchestration
-    application.run_polling()
+    # Fix for Python 3.14+ Event Loop policy allocation differences
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    if webhook_url and port_str:
+        port = int(port_str)
+        logger.info(f"Starting Webhook on port {port}. External URL: {webhook_url}")
+        
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=BOT_TOKEN,
+            webhook_url=f"{webhook_url}/{BOT_TOKEN}"
+        )
+    else:
+        logger.info("Missing Render environment variables. Falling back to local polling...")
+        application.run_polling()
 
 if __name__ == "__main__":
     main()
